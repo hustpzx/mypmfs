@@ -242,11 +242,13 @@ struct pmfs_blocknode_lowhigh {
        __le64 block_low;
        __le64 block_high;
 };
-               
+
+			   
 struct pmfs_blocknode {
 	struct list_head link;
 	unsigned long block_low;
 	unsigned long block_high;
+	struct pmfs_blockp *blockp;
 };
 
 struct pmfs_blockp{
