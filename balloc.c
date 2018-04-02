@@ -19,6 +19,13 @@
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/* 
+ * Amendment:
+ * 1.build index on free blocks;
+ * 2.build three linear lists for three-size-type continuous free blocks;
+ * 3.modify relative algorithm.
+ */
+
 #include <linux/fs.h>
 #include <linux/bitops.h>
 #include "pmfs.h"
@@ -28,17 +35,38 @@ void pmfs_init_blockmap(struct super_block *sb, unsigned long init_used_size)
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
 	unsigned long num_used_block;
 	struct pmfs_blocknode *blknode;
+	struct pmfs_blockp *blkp;
+	unsigned long length;
 
+	/* init_used_size contains: super blocks, pmfs-log, etc */
 	num_used_block = (init_used_size + sb->s_blocksize - 1) >>
 		sb->s_blocksize_bits;
 
 	blknode = pmfs_alloc_blocknode(sb);
-	if (blknode == NULL)
+	blkp = pmfs_alloc_blockp();
+	if (blknode == NULL || blkp == NULL)
 		PMFS_ASSERT(0);
+	blkp->blocknode = blknode;  
+	/*  M1
 	blknode->block_low = sbi->block_start;
 	blknode->block_high = sbi->block_start + num_used_block - 1;
+	*/
 	sbi->num_free_blocks -= num_used_block;
-	list_add(&blknode->link, &sbi->block_inuse_head);
+	
+	blknode->block_low = sbi->block_start + num_used_block - 1 ;
+	blknode->block_high = sbi->block_end ;
+	
+	length = blknode->block_high - blknode->block_low + 1;
+	/* M2  list_add(&blknode->link, &sbi->block_inuse_head); */
+	list_add(&blknode->link, &sbi->block_free_head);   // build index on continuous freeblocks 
+	/* build three linear list */
+	if(length<512)  
+		list_add(&blkp->link, &sbi->freeblocks_4K_head);
+	else if(length>=512 && length<0x40000)
+		list_add(&blkp->link, &sbi->freeblocks_2M_head);
+	else
+		list_add(&blkp->link, &sbi->freeblocks_1G_head);
+	
 }
 
 static struct pmfs_blocknode *pmfs_next_blocknode(struct pmfs_blocknode *i,
@@ -47,6 +75,43 @@ static struct pmfs_blocknode *pmfs_next_blocknode(struct pmfs_blocknode *i,
 	if (list_is_last(&i->link, head))
 		return NULL;
 	return list_first_entry(&i->link, typeof(*i), link);
+}
+
+unsigned int is_freeblks_type_change(struct super_block *sb,struct list_head *head, struct pmfs_blocknode *node){
+	struct pmfs_sb_info *sbi=PMFS_SB(sb);
+	unsigned int length= node->block_high - node->block_low +1;
+	if(head == &(sbi->freeblocks_4K_head))
+		return (length<512) ? 0 : 1;
+	else if(head == &(sbi->freeblocks_2M_head))
+		return (length>=512 && length< 0x40000) ? 0 : 1;
+	else 
+		return (length>= 0x40000) ? 0: 1;
+	
+}	
+
+struct list_head *pmfs_get_type_head(struct super_block *sb, unsigned long size, unsigned int flag)
+{
+	/* flag means two different call method */
+	struct pmfs_sb_info *sbi=PMFS_SB(sb);
+	struct list_head *head;
+	if(size < 512){
+		head = &(sbi->freeblocks_4K_head);
+		if(flag==0 && head->next == head){  // if the 4K_list is empty, find freeblocks on 2M_list
+			size=512;
+		}
+	}
+	if(size>=512 && size<0x40000 ){
+		head = &(sbi->freeblocks_2M_head);
+		if(flag==0 && head -> next == head)   // if the 2M_list is empty ,find freeblocks on 1G_list
+			size=0x40000;
+	}
+	if(size>=0x40000){
+		head = &(sbi->freeblocks_1G_head);
+		if(flag==0 && head ->next == head){ // if the 1G_list is empty, no continuous freeblocks can fit needs, return error code
+			head=NULL;
+		}
+	}
+	return head;
 }
 
 /* Caller must hold the super_block lock.  If start_hint is provided, it is
@@ -152,15 +217,20 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 	unsigned short btype, int zero)
 {
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
-	struct list_head *head = &(sbi->block_inuse_head);
-	struct pmfs_blocknode *i, *next_i;
+	//struct list_head *head = &(sbi->block_inuse_head);
+     	struct list_head *free_head = &(sbi->block_free_head);
+	struct list_head *free_type_head = NULL;
+	struct pmfs_blocknode *i;
+	struct pmfs_blockp *pi, newpi;
 	struct pmfs_blocknode *free_blocknode= NULL;
+	struct pmfs_blockp *free_blockp = NULL;
 	void *bp;
 	unsigned long num_blocks = 0;
-	struct pmfs_blocknode *curr_node;
+	//struct pmfs_blocknode *curr_node;
 	int errval = 0;
 	bool found = 0;
-	unsigned long next_block_low;
+	unsigned long new_size;
+	//unsigned long next_block_low;
 	unsigned long new_block_low;
 	unsigned long new_block_high;
 
@@ -168,6 +238,48 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 
 	mutex_lock(&sbi->s_lock);
 
+	free_type_head=pmfs_get_type_head(sb, btype,0);
+	if(!free_type_head)
+		goto out;
+	
+	pi = list_first_entry(free_type_head, typeof(*pi), link); 
+	i=pi->blocknode;
+	
+	new_block_low=i->block_low;  // aligns  left
+	new_block_high=new_block_low + num_blocks - 1;
+	
+	if(new_block_high == i->block_high ){ 
+		/* Fits entire freeblocks */
+		list_del(&i->link);
+		list_del(&pi->link);
+		free_blocknode = i;
+		free_blockp = pi;
+		sbi->num_blocknode_allocated--;
+		sbi->num_free_blocks -= num_blocks;
+		found= 1;
+	}
+	else if(new_block_high < i->block_high){
+		/* Aligns left */
+		i->block_low = new_block_high +1;
+		sbi->num_free_blocks -= num_blocks;
+		found = 1;
+		/* maintain three list struct */
+		if(is_freeblks_type_change(sb, free_type_head, i)){
+			list_del(&pi->link);
+			free_blockp = pi;
+
+			newpi=pmfs_alloc_blockp();
+			if(newpi== NULL)
+				PMFS_ASSERT(0);
+			newpi->blocknode=i;
+			new_size=i->block_high - i->block_low +1;
+			free_type_head=pmfs_get_type_head(sb,new_size , 1);
+			list_add(newpi->link, free_type_head);
+		}
+			
+	}
+
+/*
 	list_for_each_entry(i, head, link) {
 		if (i->link.next == head) {
 			next_i = NULL;
@@ -181,14 +293,14 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 		new_block_high = new_block_low + num_blocks - 1;
 
 		if (new_block_high >= next_block_low) {
-			/* Does not fit - skip to next blocknode */
+			/* Does not fit - skip to next blocknode */ /*
 			continue;
 		}
 
 		if ((new_block_low == (i->block_high + 1)) &&
 			(new_block_high == (next_block_low - 1)))
 		{
-			/* Fill the gap completely */
+			/* Fill the gap completely */ /*
 			if (next_i) {
 				i->block_high = next_i->block_high;
 				list_del(&next_i->link);
@@ -203,7 +315,7 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 
 		if ((new_block_low == (i->block_high + 1)) &&
 			(new_block_high < (next_block_low - 1))) {
-			/* Aligns to left */
+			/* Aligns to left */ /*
 			i->block_high = new_block_high;
 			found = 1;
 			break;
@@ -211,12 +323,12 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 
 		if ((new_block_low > (i->block_high + 1)) &&
 			(new_block_high == (next_block_low - 1))) {
-			/* Aligns to right */
+			/* Aligns to right */ /*
 			if (next_i) {
-				/* right node exist */
+				/* right node exist */  /*
 				next_i->block_low = new_block_low;
 			} else {
-				/* right node does NOT exist */
+				/* right node does NOT exist */  /*
 				curr_node = pmfs_alloc_blocknode(sb);
 				PMFS_ASSERT(curr_node);
 				if (curr_node == NULL) {
@@ -233,7 +345,7 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 
 		if ((new_block_low > (i->block_high + 1)) &&
 			(new_block_high < (next_block_low - 1))) {
-			/* Aligns somewhere in the middle */
+			/* Aligns somewhere in the middle */   /*
 			curr_node = pmfs_alloc_blocknode(sb);
 			PMFS_ASSERT(curr_node);
 			if (curr_node == NULL) {
@@ -246,7 +358,8 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 			found = 1;
 			break;
 		}
-	}
+	}  */
+
 	
 	if (found == 1) {
 		sbi->num_free_blocks -= num_blocks;
@@ -256,7 +369,9 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 
 	if (free_blocknode)
 		__pmfs_free_blocknode(free_blocknode);
-
+	if(free_blockp)
+		__pmfs_free_blockp(free_blockp);
+out:
 	if (found == 0) {
 		return -ENOSPC;
 	}

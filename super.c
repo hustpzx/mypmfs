@@ -38,6 +38,7 @@ static struct super_operations pmfs_sops;
 static const struct export_operations pmfs_export_ops;
 static struct kmem_cache *pmfs_inode_cachep;
 static struct kmem_cache *pmfs_blocknode_cachep;
+static struct kmem_cache *pmfs_blockp_cachep;
 static struct kmem_cache *pmfs_transaction_cachep;
 /* FIXME: should the following variable be one per PMFS instance? */
 unsigned int pmfs_dbgmask = 0;
@@ -956,6 +957,10 @@ void __pmfs_free_blocknode(struct pmfs_blocknode *bnode)
 	kmem_cache_free(pmfs_blocknode_cachep, bnode);
 }
 
+void __pmfs_free_blockp(struct pmfs_blockp *pnode)
+{
+	kmem_cache_free(pmfs_blockp_cachep,pnode);
+}
 void pmfs_free_blocknode(struct super_block *sb, struct pmfs_blocknode *bnode)
 {
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
@@ -979,6 +984,17 @@ struct pmfs_blocknode *pmfs_alloc_blocknode(struct super_block *sb)
 		sbi->num_blocknode_allocated++;
 	}
 	return p;
+}
+
+struct pmfs_blockp *pmfs_alloc_blockp()
+{
+	struct pmfs_blockp *p;
+	p = (struct pmfs_blockp *)
+		kmem_cache_alloc(pmfs_blockp_cachep,GFP_NOFS);
+	if(p)
+		return p;
+	else 
+		return NULL;
 }
 
 static struct inode *pmfs_alloc_inode(struct super_block *sb)

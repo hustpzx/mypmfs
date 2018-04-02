@@ -249,6 +249,11 @@ struct pmfs_blocknode {
 	unsigned long block_high;
 };
 
+struct pmfs_blockp{
+	struct list_head link;
+	struct pmfs_blocknode * blocknode;
+};
+
 struct pmfs_inode_info {
 	__u32   i_dir_start_lookup;
 	struct list_head i_truncated;
@@ -263,9 +268,17 @@ struct pmfs_sb_info {
 	 * base physical and virtual address of PMFS (which is also
 	 * the pointer to the super block)
 	 */
+	 /* Modification: 
+	  * 1.add list head block_free_head (like the block_inuse_head)	
+	  * 2.add three type list
+	 */
 	phys_addr_t	phys_addr;
 	void		*virt_addr;
 	struct list_head block_inuse_head;
+	struct list_head block_free_head; /* M1 */
+	struct list_head freeblocks_4K_head;
+	struct list_head freeblocks_2M_head;
+	struct list_head freeblocks_1G_head;
 	unsigned long	block_start;
 	unsigned long	block_end;
 	unsigned long	num_free_blocks;
