@@ -154,7 +154,7 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 			prev_block_high = sbi->block_start;
 		} else {
 			prev_i = list_entry(i->link.prev, typeof(*i), link);
-			pre_block_high = prev_i->block_high;
+			prev_block_high = prev_i->block_high;
 		}
 		
 		if (new_block_low > i->block_high) {
@@ -193,7 +193,7 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 				i->blockp = newbp;
 				new_size = i->block_high - i->block_low +1;
 				free_type_head=pmfs_get_type_head(sb,new_size,1);
-				list_add(newbp->link, free_type_head);
+				list_add(&newbp->link, free_type_head);
 			}
 
 			sbi->num_free_blocks += num_blocks;
@@ -218,7 +218,7 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 						PMFS_ASSERT(0);
 					newbp->blocknode = prev_i;
 					prev_i->blockp = newbp;
-					newsize=prev_i->block_high - prev_i->block_low + 1;
+					new_size=prev_i->block_high - prev_i->block_low + 1;
 					free_type_head = pmfs_get_type_head(sb,new_size,1);
 					list_add(&newbp->link, free_type_head);
 				}
@@ -258,7 +258,7 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 				newbp->blocknode = i;
 				i->blockp = newbp;
 				new_size = i->block_high - i->block_low + 1;
-				free_type_head(sb,new_size,1);
+				free_type_head = pmfs_get_type_head(sb,new_size,1);
 				list_add(&newbp->link, free_type_head);
 			}
 			sbi->num_free_blocks += num_blocks;
@@ -286,7 +286,7 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 		/*
 		if ((new_block_low == i->block_low) &&
 			(new_block_high == i->block_high)) {
-			/* fits entire datablock *//*
+			 //fits entire datablock 
 			if (start_hint)
 				*start_hint = pmfs_next_blocknode(i, head);
 			list_del(&i->link);
@@ -297,7 +297,7 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 		}
 		if ((new_block_low == i->block_low) &&
 			(new_block_high < i->block_high)) {
-			/* Aligns left *//*
+			 //Aligns left 
 			i->block_low = new_block_high + 1;
 			sbi->num_free_blocks += num_blocks;
 			if (start_hint)
@@ -306,7 +306,7 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 		}
 		if ((new_block_low > i->block_low) && 
 			(new_block_high == i->block_high)) {
-			/* Aligns right *//*
+			//Aligns right 
 			i->block_high = new_block_low - 1;
 			sbi->num_free_blocks += num_blocks;
 			if (start_hint)
@@ -315,11 +315,11 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 		}
 		if ((new_block_low > i->block_low) &&
 			(new_block_high < i->block_high)) {
-			/* Aligns somewhere in the middle *//*
+			//Aligns somewhere in the middle 
 			curr_node = pmfs_alloc_blocknode(sb);
 			PMFS_ASSERT(curr_node);
 			if (curr_node == NULL) {
-				/* returning without freeing the block*//*
+				// returning without freeing the block
 				goto block_found;
 			}
 			curr_node->block_low = new_block_high + 1;
@@ -360,10 +360,10 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 {
 	struct pmfs_sb_info *sbi = PMFS_SB(sb);
 	//struct list_head *head = &(sbi->block_inuse_head);
-     	struct list_head *free_head = &(sbi->block_free_head);
+     	//struct list_head *free_head = &(sbi->block_free_head);
 	struct list_head *free_type_head = NULL;
 	struct pmfs_blocknode *i;
-	struct pmfs_blockp *pi, newpi;
+	struct pmfs_blockp *pi, *newpi;
 	struct pmfs_blocknode *free_blocknode= NULL;
 	struct pmfs_blockp *free_blockp = NULL;
 	void *bp;
@@ -412,13 +412,13 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 			free_blockp = pi;
 
 			newpi=pmfs_alloc_blockp();
-			if(newpi== NULL)
+			if(newpi == NULL)
 				PMFS_ASSERT(0);
 			newpi->blocknode=i;
 			i->blockp=newpi;
 			new_size=i->block_high - i->block_low +1;
 			free_type_head=pmfs_get_type_head(sb,new_size , 1);
-			list_add(newpi->link, free_type_head);
+			list_add(&newpi->link, free_type_head);
 		}
 			
 	}
@@ -437,14 +437,14 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 		new_block_high = new_block_low + num_blocks - 1;
 
 		if (new_block_high >= next_block_low) {
-			/* Does not fit - skip to next blocknode */ /*
+			// Does not fit - skip to next blocknode 
 			continue;
 		}
 
 		if ((new_block_low == (i->block_high + 1)) &&
 			(new_block_high == (next_block_low - 1)))
 		{
-			/* Fill the gap completely */ /*
+			// Fill the gap completely 
 			if (next_i) {
 				i->block_high = next_i->block_high;
 				list_del(&next_i->link);
@@ -459,7 +459,7 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 
 		if ((new_block_low == (i->block_high + 1)) &&
 			(new_block_high < (next_block_low - 1))) {
-			/* Aligns to left */ /*
+			// Aligns to left 
 			i->block_high = new_block_high;
 			found = 1;
 			break;
@@ -467,12 +467,12 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 
 		if ((new_block_low > (i->block_high + 1)) &&
 			(new_block_high == (next_block_low - 1))) {
-			/* Aligns to right */ /*
+			// Aligns to right 
 			if (next_i) {
-				/* right node exist */  /*
+				//right node exist 
 				next_i->block_low = new_block_low;
 			} else {
-				/* right node does NOT exist */  /*
+				// right node does NOT exist 
 				curr_node = pmfs_alloc_blocknode(sb);
 				PMFS_ASSERT(curr_node);
 				if (curr_node == NULL) {
@@ -489,7 +489,7 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 
 		if ((new_block_low > (i->block_high + 1)) &&
 			(new_block_high < (next_block_low - 1))) {
-			/* Aligns somewhere in the middle */   /*
+			// Aligns somewhere in the middle 
 			curr_node = pmfs_alloc_blocknode(sb);
 			PMFS_ASSERT(curr_node);
 			if (curr_node == NULL) {
@@ -502,7 +502,8 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 			found = 1;
 			break;
 		}
-	}  */
+	} 
+*/
 
 	
 	if (found == 1) {
