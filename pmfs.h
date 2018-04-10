@@ -112,7 +112,7 @@ extern int pmfs_mmap(struct file *file, struct vm_area_struct *vma);
 /* balloc.c */
 int pmfs_setup_blocknode_map(struct super_block *sb);
 extern struct pmfs_blocknode *pmfs_alloc_blocknode(struct super_block *sb);
-extern struct pmfs_blockp *pmfs_alloc_blockp();
+extern struct pmfs_blockp *pmfs_alloc_blockp(void);
 extern void pmfs_free_blocknode(struct super_block *sb, struct pmfs_blocknode *bnode);
 extern void pmfs_init_blockmap(struct super_block *sb,
 		unsigned long init_used_size);

@@ -662,6 +662,10 @@ static int pmfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Init with default values */
 	INIT_LIST_HEAD(&sbi->block_inuse_head);
+	INIT_LIST_HEAD(&sbi->block_free_head);
+	INIT_LIST_HEAD(&sbi->freeblocks_4K_head);
+	INIT_LIST_HEAD(&sbi->freeblocks_2M_head);
+	INIT_LIST_HEAD(&sbi->freeblocks_1G_head);
 	sbi->mode = (S_IRUGO | S_IXUGO | S_IWUSR);
 	sbi->uid = current_fsuid();
 	sbi->gid = current_fsgid();
@@ -986,7 +990,7 @@ struct pmfs_blocknode *pmfs_alloc_blocknode(struct super_block *sb)
 	return p;
 }
 
-struct pmfs_blockp *pmfs_alloc_blockp()
+struct pmfs_blockp *pmfs_alloc_blockp(void)
 {
 	struct pmfs_blockp *p;
 	p = (struct pmfs_blockp *)
@@ -1042,6 +1046,17 @@ static int __init init_blocknode_cache(void)
 	return 0;
 }
 
+static int __init init_blockp_cache(void)
+{
+	pmfs_blockp_cachep = kmem_cache_create("pmfs_blockp_cache",
+					sizeof(struct pmfs_blockp),
+					0, (SLAB_RECLAIM_ACCOUNT |
+                                        SLAB_MEM_SPREAD), NULL);
+	if (pmfs_blockp_cachep == NULL)
+		return -ENOMEM;
+	return 0;
+}
+
 
 static int __init init_inodecache(void)
 {
@@ -1082,6 +1097,12 @@ static void destroy_blocknode_cache(void)
 {
 	kmem_cache_destroy(pmfs_blocknode_cachep);
 }
+
+static void destroy_blockp_cache(void)
+{
+	kmem_cache_destroy(pmfs_blockp_cachep);
+}
+
 
 /*
  * the super block writes are all done "on the fly", so the
@@ -1168,6 +1189,10 @@ static int __init init_pmfs_fs(void)
 	if (rc)
 		return rc;
 
+	rc = init_blockp_cache();
+	if(rc)
+		goto out0;
+
 	rc = init_transaction_cache();
 	if (rc)
 		goto out1;
@@ -1193,6 +1218,8 @@ out3:
 out2:
 	destroy_transaction_cache();
 out1:
+	destroy_blockp_cache();
+out0:
 	destroy_blocknode_cache();
 	return rc;
 }
