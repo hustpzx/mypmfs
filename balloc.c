@@ -171,10 +171,45 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 		//pmfs_info("pmfs dbg info: __pmfs_free_block(), i->block_low=%lu, i->block_high=%lu, 
 		//			prev_block_high=%lu\n",i->block_low, i->block_high,prev_block_high);
 		
-		if (new_block_low > i->block_high) {
+		if (new_block_low > i->block_high && i->link.next != free_head) {
 			/* skip to next blocknode */ 
 			//pmfs_info("pmfs dbg info: __pmfs_free_block(): skip to next\n");
 			continue;
+		}
+
+		if(new_block_low > i->block_high && i->link.next == free_head){
+			if(new_block_low == i->block_high + 1){
+				//aligns left
+				size = i->block_high - i->block_low +1;
+				free_type_head = pmfs_get_type_head(sb,size,1);
+				i->block_high = new_block_high;
+				bp = i->blockp;
+				if(is_freeblks_type_change(sb,free_type_head, i)){
+					list_del(&bp->link);
+					new_size = i->block_high - i->block_low +1;
+					free_type_head = pmfs_get_type_head(sb,new_size,1);
+					list_add(&bp->link, free_type_head);
+				}
+				sbi->num_free_blocks += num_blocks;
+				goto block_found;
+			}
+
+			if(new_block_low > i->block_high +1){
+				curr_node = pmfs_alloc_blocknode( sb);
+				newbp = pmfs_alloc_blockp();
+				if(curr_node == NULL || newbp == NULL)
+					PMFS_ASSERT(0);
+				curr_node->blockp = newbp;
+				curr_node->block_low = new_block_low;
+				curr_node->block_high = new_block_high;
+				newbp->blocknode = curr_node;
+				sbi->num_blocknode_allocated ++;
+				list_add(&curr_node->link, &i->link);
+				free_type_head = pmfs_get_type_head(sb,num_blocks,1);
+				list_add(&newbp->link, free_type_head);
+				sbi->num_free_blocks += num_blocks;
+				goto block_found;
+			}
 		}
 
 		if((new_block_low ==  (prev_block_high + 1)) && 
@@ -201,15 +236,9 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 			/* maintail three list structs */
 			if(is_freeblks_type_change(sb,free_type_head,i)){
 				list_del(&bp->link);
-				free_blockp2=bp;
-				newbp=pmfs_alloc_blockp();
-				if(newbp == NULL)
-					PMFS_ASSERT(0);
-				newbp->blocknode = i;
-				i->blockp = newbp;
 				new_size = i->block_high - i->block_low +1;
 				free_type_head=pmfs_get_type_head(sb,new_size,1);
-				list_add(&newbp->link, free_type_head);
+				list_add(&bp->link, free_type_head);
 			}
 
 			sbi->num_free_blocks += num_blocks;
@@ -228,16 +257,9 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 				prev_i->block_high = new_block_high;
 				if(is_freeblks_type_change(sb,free_type_head,prev_i)){
 					list_del(&bp_prev->link);
-					free_blockp = bp_prev;
-
-					newbp = pmfs_alloc_blockp();
-					if(newbp == NULL)
-						PMFS_ASSERT(0);
-					newbp->blocknode = prev_i;
-					prev_i->blockp = newbp;
 					new_size=prev_i->block_high - prev_i->block_low + 1;
 					free_type_head = pmfs_get_type_head(sb,new_size,1);
-					list_add(&newbp->link, free_type_head);
+					list_add(&bp_prev->link, free_type_head);
 				}
 			}
 			else {
@@ -269,15 +291,9 @@ void __pmfs_free_block(struct super_block *sb, unsigned long blocknr,
 			i->block_low=new_block_low;
 			if(is_freeblks_type_change(sb,free_type_head,i)){
 				list_del(&bp->link);
-				free_blockp=bp;
-
-				newbp = pmfs_alloc_blockp();
-				PMFS_ASSERT(newbp);
-				newbp->blocknode = i;
-				i->blockp = newbp;
 				new_size = i->block_high - i->block_low + 1;
 				free_type_head = pmfs_get_type_head(sb,new_size,1);
-				list_add(&newbp->link, free_type_head);
+				list_add(&bp->link, free_type_head);
 			}
 			sbi->num_free_blocks += num_blocks;
 			goto block_found;
@@ -447,18 +463,11 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 		sbi->num_free_blocks -= num_blocks;
 		found = 1;
 		/* maintain three list struct */
-		if(is_freeblks_type_change(sb, free_type_head, i)){
+		if(is_freeblks_type_change(sb, free_type_head, i)){ //move pi to lower linklist
 			list_del(&pi->link);
-			free_blockp = pi;
-
-			newpi=pmfs_alloc_blockp();
-			if(newpi == NULL)
-				PMFS_ASSERT(0);
-			newpi->blocknode=i;
-			i->blockp=newpi;
 			new_size=i->block_high - i->block_low +1;
 			free_type_head=pmfs_get_type_head(sb,new_size , 1);
-			list_add(&newpi->link, free_type_head);
+			list_add(&pi->link, free_type_head);
 		}
 			
 	}
